@@ -1,4 +1,4 @@
-name: Blender Render MP4 v4
+name: Blender Render MP4 v5
 
 on:
   workflow_dispatch:
@@ -12,7 +12,8 @@ jobs:
         run: |
           sudo snap install blender --classic
           blender --version
-          ffmpeg -version | head -1 || sudo apt-get install -y ffmpeg
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -1
 
       - name: Generate scene script
         run: |
