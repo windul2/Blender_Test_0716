@@ -1,0 +1,85 @@
+name: Blender Render MP4
+
+on:
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Install Blender
+        run: sudo snap install blender --classic
+
+      - name: Generate scene script
+        run: |
+          cat > scene.py << 'EOF'
+          import bpy, math, os
+
+          # ── 빈 씬으로 시작 ──
+          bpy.ops.wm.read_factory_settings(use_empty=True)
+          scene = bpy.context.scene
+
+          # ── 모델링: 토러스 ──
+          bpy.ops.mesh.primitive_torus_add(major_radius=1.2, minor_radius=0.4)
+          obj = bpy.context.object
+          bpy.ops.object.shade_smooth()
+
+          # ── 네온 Emission 머티리얼 ──
+          mat = bpy.data.materials.new("Neon")
+          mat.use_nodes = True
+          nodes = mat.node_tree.nodes
+          nodes.clear()
+          out = nodes.new("ShaderNodeOutputMaterial")
+          emis = nodes.new("ShaderNodeEmission")
+          emis.inputs[0].default_value = (0.0, 1.0, 0.8, 1)  # 시안 네온
+          emis.inputs[1].default_value = 5.0                  # 밝기
+          mat.node_tree.links.new(emis.outputs[0], out.inputs[0])
+          obj.data.materials.append(mat)
+
+          # ── 바닥 ──
+          bpy.ops.mesh.primitive_plane_add(size=20, location=(0, 0, -1.5))
+
+          # ── 조명 ──
+          bpy.ops.object.light_add(type='AREA', location=(3, -3, 4))
+          bpy.context.object.data.energy = 400
+
+          # ── 카메라 ──
+          bpy.ops.object.camera_add(location=(0, -6, 2),
+                                    rotation=(math.radians(75), 0, 0))
+          scene.camera = bpy.context.object
+
+          # ── 회전 애니메이션 (90프레임 = 30fps 3초) ──
+          scene.frame_start, scene.frame_end = 1, 90
+          obj.rotation_euler = (0, 0, 0)
+          obj.keyframe_insert("rotation_euler", frame=1)
+          obj.rotation_euler = (math.radians(360), 0, math.radians(360))
+          obj.keyframe_insert("rotation_euler", frame=90)
+
+          # ── 렌더 설정: Cycles CPU 저샘플 + 디노이즈 ──
+          scene.render.engine = 'CYCLES'
+          scene.cycles.device = 'CPU'
+          scene.cycles.samples = 16
+          scene.cycles.use_denoising = True
+          scene.render.resolution_x = 640
+          scene.render.resolution_y = 360
+          scene.render.fps = 30
+
+          # ── MP4(H.264) 직접 출력 ──
+          scene.render.image_settings.file_format = 'FFMPEG'
+          scene.render.ffmpeg.format = 'MPEG4'
+          scene.render.ffmpeg.codec = 'H264'
+          scene.render.ffmpeg.constant_rate_factor = 'MEDIUM'
+          scene.render.filepath = os.path.join(os.getcwd(), "output", "anim")
+
+          bpy.ops.render.render(animation=True)
+          EOF
+
+      - name: Render animation
+        run: blender -b -P scene.py
+
+      - name: Upload MP4
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-mp4
+          path: output/*.mp4
