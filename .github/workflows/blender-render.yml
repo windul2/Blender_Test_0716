@@ -1,4 +1,4 @@
-name: Goal Survivor Intro v6
+name: ATLAS Robot Showcase v7
 
 on:
   workflow_dispatch:
@@ -29,12 +29,21 @@ jobs:
           bpy.ops.wm.read_factory_settings(use_empty=True)
           scene = bpy.context.scene
 
-          # 어두운 월드 배경
           world = bpy.data.worlds.new("W")
-          world.color = (0.002, 0.002, 0.012)
+          world.color = (0.001, 0.002, 0.005)
           scene.world = world
 
-          def neon_mat(name, color, strength):
+          # ── 재질 ──
+          def metal_mat(name, color, rough=0.35, metallic=0.9):
+              mat = bpy.data.materials.new(name)
+              mat.use_nodes = True
+              b = mat.node_tree.nodes.get("Principled BSDF")
+              b.inputs["Base Color"].default_value = (color[0], color[1], color[2], 1)
+              b.inputs["Metallic"].default_value = metallic
+              b.inputs["Roughness"].default_value = rough
+              return mat
+
+          def glow_mat(name, color, strength):
               mat = bpy.data.materials.new(name)
               mat.use_nodes = True
               nodes = mat.node_tree.nodes
@@ -46,71 +55,187 @@ jobs:
               mat.node_tree.links.new(emis.outputs[0], out.inputs[0])
               return mat, emis.inputs[1]
 
-          def kf(sock, frame, val):
-              sock.default_value = val
-              sock.keyframe_insert("default_value", frame=frame)
+          MET  = metal_mat("Metal", (0.80, 0.90, 1.00), 0.30, 0.9)   # 밝은 메탈
+          DARK = metal_mat("Dark",  (0.06, 0.13, 0.24), 0.45, 0.7)   # 다크 네이비
+          GLOW, glow_str = glow_mat("Cyan", (0.13, 0.91, 1.0), 4.0)  # 시안 글로우
+          GRID, _ = glow_mat("Grid", (0.13, 0.91, 1.0), 1.2)
+          FLOOR = metal_mat("Floor", (0.015, 0.025, 0.045), 0.22, 0.5)
 
-          # ── 신스웨이브 그리드 바닥 (마젠타 와이어) ──
+          # ── 프리미티브 헬퍼 ──
+          def box(name, size, loc, mat):
+              bpy.ops.mesh.primitive_cube_add(location=loc)
+              o = bpy.context.object; o.name = name
+              o.scale = (size[0]/2, size[1]/2, size[2]/2)
+              o.data.materials.append(mat); return o
+
+          def cyl(name, r, depth, loc, mat):
+              bpy.ops.mesh.primitive_cylinder_add(radius=r, depth=depth, location=loc)
+              o = bpy.context.object; o.name = name
+              for p in o.data.polygons: p.use_smooth = True
+              o.data.materials.append(mat); return o
+
+          def sph(name, r, loc, mat):
+              bpy.ops.mesh.primitive_uv_sphere_add(radius=r, location=loc)
+              o = bpy.context.object; o.name = name
+              for p in o.data.polygons: p.use_smooth = True
+              o.data.materials.append(mat); return o
+
+          def emp(name, loc):
+              bpy.ops.object.empty_add(location=loc)
+              o = bpy.context.object; o.name = name; return o
+
+          # ── 무대 ──
+          floor = box("Floor", (60, 60, 0.1), (0, 5, -0.05), FLOOR)
           bpy.ops.mesh.primitive_grid_add(x_subdivisions=40, y_subdivisions=40,
-                                          size=60, location=(0, 10, -1.2))
+                                          size=60, location=(0, 5, 0.004))
           grid = bpy.context.object
-          wire = grid.modifiers.new("Wire", 'WIREFRAME')
-          wire.thickness = 0.06
-          gmat, _ = neon_mat("Grid", (1.0, 0.1, 0.9), 2.0)
-          grid.data.materials.append(gmat)
+          grid.modifiers.new("Wire", 'WIREFRAME').thickness = 0.04
+          grid.data.materials.append(GRID)
 
-          # ── 타이틀: GOAL / SURVIVOR (시안, 3초에 플리커 점등) ──
-          bpy.ops.object.text_add(location=(0, 2, 0.9))
-          title = bpy.context.object
-          title.data.body = "GOAL\nSURVIVOR"
-          title.data.align_x = 'CENTER'
-          title.data.size = 1.1
-          title.data.extrude = 0.06
-          title.rotation_euler = (math.radians(90), 0, 0)
-          tmat, t_str = neon_mat("Title", (0.0, 1.0, 0.85), 0.0)
-          title.data.materials.append(tmat)
-          for f, v in [(1,0),(70,0),(74,9),(78,1),(82,10),(86,2),(90,8),(96,8)]:
-              kf(t_str, f, v)
+          # ── 로봇 파트 (정면 = -Y) ──
+          root    = emp("root", (0, 0, 0))
+          torso_e = emp("torso_e", (0, 0, 1.02))
+          sh_R = emp("sh_R", ( 0.42, 0, 1.66)); el_R = emp("el_R", ( 0.42, 0, 1.32))
+          sh_L = emp("sh_L", (-0.42, 0, 1.66)); el_L = emp("el_L", (-0.42, 0, 1.32))
+          hip_R = emp("hip_R", ( 0.18, 0, 0.84)); kn_R = emp("kn_R", ( 0.18, 0, 0.46))
+          hip_L = emp("hip_L", (-0.18, 0, 0.84)); kn_L = emp("kn_L", (-0.18, 0, 0.46))
 
-          # ── 서브타이틀: NEON LAST STAND (마젠타, 10초 페이드인) ──
-          bpy.ops.object.text_add(location=(0, 2, -0.35))
-          sub = bpy.context.object
-          sub.data.body = "NEON LAST STAND"
-          sub.data.align_x = 'CENTER'
-          sub.data.size = 0.28
-          sub.data.extrude = 0.02
-          sub.rotation_euler = (math.radians(90), 0, 0)
-          smat, s_str = neon_mat("Sub", (1.0, 0.15, 0.9), 0.0)
-          sub.data.materials.append(smat)
-          for f, v in [(1,0),(238,0),(262,6)]:
-              kf(s_str, f, v)
+          pelvis = box("pelvis", (0.46, 0.28, 0.22), (0, 0, 0.92), MET)
+          chest  = box("chest",  (0.60, 0.34, 0.50), (0, 0, 1.35), MET)
+          c_str  = box("c_str",  (0.30, 0.02, 0.06), (0, -0.18, 1.30), GLOW)
+          neck   = cyl("neck", 0.07, 0.14, (0, 0, 1.67), DARK)
+          head   = box("head", (0.34, 0.28, 0.24), (0, 0, 1.86), MET)
+          visor  = box("visor", (0.24, 0.02, 0.05), (0, -0.15, 1.88), GLOW)
+          pad_R  = box("pad_R", (0.20, 0.24, 0.16), ( 0.44, 0, 1.72), DARK)
+          pad_L  = box("pad_L", (0.20, 0.24, 0.16), (-0.44, 0, 1.72), DARK)
 
-          # ── 빛나는 공 (4.5~10초 굴러 지나감) ──
-          bpy.ops.mesh.primitive_uv_sphere_add(radius=0.55, location=(1.3, 26, -0.65))
-          ball = bpy.context.object
-          for p in ball.data.polygons:
-              p.use_smooth = True
-          bmat, _ = neon_mat("Ball", (1.0, 1.0, 1.0), 1.5)
-          ball.data.materials.append(bmat)
-          ball.keyframe_insert("location", frame=110)
-          ball.location = (1.3, -4.5, -0.65)
-          ball.keyframe_insert("location", frame=250)
-          ball.rotation_euler = (0, 0, 0)
-          ball.keyframe_insert("rotation_euler", frame=110)
-          ball.rotation_euler = (-math.radians(360 * 6), 0, 0)
-          ball.keyframe_insert("rotation_euler", frame=250)
+          ua_R = cyl("ua_R", 0.075, 0.34, ( 0.42, 0, 1.49), DARK)
+          fa_R = cyl("fa_R", 0.065, 0.32, ( 0.42, 0, 1.16), MET)
+          fi_R = sph("fi_R", 0.10, ( 0.42, 0, 0.96), MET)
+          ua_L = cyl("ua_L", 0.075, 0.34, (-0.42, 0, 1.49), DARK)
+          fa_L = cyl("fa_L", 0.065, 0.32, (-0.42, 0, 1.16), MET)
+          fi_L = sph("fi_L", 0.10, (-0.42, 0, 0.96), MET)
 
-          # ── 카메라 (세로 프레이밍, 천천히 전진) ──
-          bpy.ops.object.camera_add(location=(0, -9.5, 0.6),
-                                    rotation=(math.radians(88), 0, 0))
+          th_R = cyl("th_R", 0.095, 0.38, ( 0.18, 0, 0.65), DARK)
+          sn_R = cyl("sn_R", 0.080, 0.34, ( 0.18, 0, 0.29), MET)
+          ft_R = box("ft_R", (0.16, 0.34, 0.10), ( 0.18, -0.07, 0.07), DARK)
+          th_L = cyl("th_L", 0.095, 0.38, (-0.18, 0, 0.65), DARK)
+          sn_L = cyl("sn_L", 0.080, 0.34, (-0.18, 0, 0.29), MET)
+          ft_L = box("ft_L", (0.16, 0.34, 0.10), (-0.18, -0.07, 0.07), DARK)
+
+          joints = []
+          for nm, loc in [("jsR",(0.42,0,1.66)),("jeR",(0.42,0,1.32)),
+                          ("jsL",(-0.42,0,1.66)),("jeL",(-0.42,0,1.32)),
+                          ("jhR",(0.18,0,0.84)),("jkR",(0.18,0,0.46)),
+                          ("jhL",(-0.18,0,0.84)),("jkL",(-0.18,0,0.46))]:
+              joints.append(sph(nm, 0.085, loc, GLOW))
+
+          bpy.context.view_layer.update()
+          def par(c, p):
+              c.parent = p
+              c.matrix_parent_inverse = p.matrix_world.inverted()
+
+          par(torso_e, root); par(pelvis, root)
+          for o in [chest, c_str, neck, head, visor, pad_R, pad_L, sh_R, sh_L]:
+              par(o, torso_e)
+          par(el_R, sh_R); par(el_L, sh_L)
+          par(ua_R, sh_R); par(fa_R, el_R); par(fi_R, el_R)
+          par(ua_L, sh_L); par(fa_L, el_L); par(fi_L, el_L)
+          par(hip_R, root); par(hip_L, root)
+          par(kn_R, hip_R); par(kn_L, hip_L)
+          par(th_R, hip_R); par(sn_R, kn_R); par(ft_R, kn_R)
+          par(th_L, hip_L); par(sn_L, kn_L); par(ft_L, kn_L)
+          par(joints[0], sh_R); par(joints[1], el_R)
+          par(joints[2], sh_L); par(joints[3], el_L)
+          par(joints[4], hip_R); par(joints[5], kn_R)
+          par(joints[6], hip_L); par(joints[7], kn_L)
+
+          root.rotation_euler.z = math.radians(18)  # 파이팅 스탠스 각도
+
+          # ── 키프레임 헬퍼 ──
+          def krot(o, f, deg):
+              o.rotation_euler.x = math.radians(deg)
+              o.keyframe_insert("rotation_euler", frame=f)
+          def ktz(o, f, deg):
+              o.rotation_euler.z = math.radians(deg)
+              o.keyframe_insert("rotation_euler", frame=f)
+          def kloc(o, f, loc):
+              o.location = loc
+              o.keyframe_insert("location", frame=f)
+          def kg(f, v):
+              glow_str.default_value = v
+              glow_str.keyframe_insert("default_value", frame=f)
+
+          # 기본 가드 포즈
+          for f in [1, 60]:
+              krot(sh_R, f, -55); krot(el_R, f, -70)
+              krot(sh_L, f, -55); krot(el_L, f, -70)
+              krot(hip_R, f, -8); krot(hip_L, f, 6)
+              krot(kn_R, f, 10);  krot(kn_L, f, 4)
+              ktz(torso_e, f, 0)
+
+          # 아이들 호흡 + 이동 루트
+          for f, loc in [(1,(0,0,0)),(30,(0,0,0.025)),(60,(0,0,0)),
+                         (84,(0,-0.16,0)),(100,(0,0,0)),(124,(0,-0.16,0)),
+                         (140,(0,0,0)),(180,(0,0.06,0)),(225,(0,0,0)),
+                         (246,(0,0,-0.08)),(262,(0,-0.10,0.22)),(276,(0,0,0)),
+                         (300,(0,0,0)),(330,(0,0,0.03)),(358,(0,0,0))]:
+              kloc(root, f, loc)
+
+          # 오른손 잽 (f70-100)
+          krot(sh_R, 70, -55); krot(sh_R, 84, -95); krot(sh_R, 100, -55)
+          krot(el_R, 70, -70); krot(el_R, 84, -4);  krot(el_R, 100, -70)
+          ktz(torso_e, 70, 0); ktz(torso_e, 84, -18); ktz(torso_e, 100, 0)
+
+          # 왼손 잽 (f110-140)
+          krot(sh_L, 110, -55); krot(sh_L, 124, -95); krot(sh_L, 140, -55)
+          krot(el_L, 110, -70); krot(el_L, 124, -4);  krot(el_L, 140, -70)
+          ktz(torso_e, 110, 0); ktz(torso_e, 124, 18); ktz(torso_e, 140, 0)
+
+          # 오른발 미들킥 (f160-225)
+          krot(hip_R, 160, -8); krot(hip_R, 180, -85); krot(hip_R, 200, -85); krot(hip_R, 225, -8)
+          krot(kn_R, 160, 10); krot(kn_R, 172, 80); krot(kn_R, 186, 4); krot(kn_R, 210, 60); krot(kn_R, 225, 10)
+
+          # 왼손 어퍼컷 (f240-285)
+          krot(sh_L, 240, -55); krot(sh_L, 252, 15); krot(sh_L, 264, -150); krot(sh_L, 285, -55)
+          krot(el_L, 240, -70); krot(el_L, 252, -95); krot(el_L, 264, -60); krot(el_L, 285, -70)
+          ktz(torso_e, 240, 0); ktz(torso_e, 252, 22); ktz(torso_e, 264, -10); ktz(torso_e, 285, 0)
+
+          # 피날레 히어로 포즈 (f295-360)
+          krot(sh_R, 295, -55); krot(sh_R, 315, -30)
+          krot(sh_L, 295, -55); krot(sh_L, 315, -30)
+          krot(el_R, 295, -70); krot(el_R, 315, -20)
+          krot(el_L, 295, -70); krot(el_L, 315, -20)
+
+          # 네온 펄스
+          for f, v in [(1,4),(290,4),(305,14),(320,5),(335,13),(352,7)]:
+              kg(f, v)
+
+          # ── 카메라 (궤도 + 푸시인) ──
+          pivot = emp("cam_pivot", (0, 0, 1.15))
+          aim = emp("aim", (0, 0, 1.15))
+          bpy.ops.object.camera_add(location=(0, -5.4, 1.55))
           cam = bpy.context.object
-          cam.data.lens = 24
+          cam.data.lens = 30
           scene.camera = cam
-          cam.keyframe_insert("location", frame=1)
-          cam.location = (0, -7.0, 0.6)
-          cam.keyframe_insert("location", frame=360)
+          bpy.context.view_layer.update()
+          par(cam, pivot)
+          tc = cam.constraints.new('TRACK_TO')
+          tc.target = aim; tc.track_axis = 'TRACK_NEGATIVE_Z'; tc.up_axis = 'UP_Y'
+          ktz(pivot, 1, -28); ktz(pivot, 230, 18); ktz(pivot, 360, 30)
+          kloc(cam, 300, (0, -5.4, 1.55)); kloc(cam, 358, (0, -3.3, 1.45))
 
-          # ── 네온 글로우 (실패해도 렌더는 계속) ──
+          # ── 조명 ──
+          def light(loc, energy, color, size=6):
+              bpy.ops.object.light_add(type='AREA', location=loc)
+              L = bpy.context.object
+              L.data.energy = energy; L.data.color = color; L.data.size = size
+              return L
+          light(( 4, -5, 5), 600, (0.80, 0.90, 1.00))
+          light((-4,  4, 3.5), 350, (1.00, 0.25, 0.35))
+          light((-3, -4, 2), 90, (0.5, 0.7, 1.0))
+
+          # ── 네온 글로우 컴포지터 (실패해도 계속) ──
           try:
               scene.use_nodes = True
               nt = scene.node_tree
@@ -118,17 +243,15 @@ jobs:
               comp = nt.nodes.get("Composite") or nt.nodes.new("CompositorNodeComposite")
               glare = nt.nodes.new("CompositorNodeGlare")
               glare.glare_type = 'FOG_GLOW'
-              try:
-                  glare.threshold = 1.0
-              except Exception:
-                  pass
+              try: glare.threshold = 1.0
+              except Exception: pass
               nt.links.new(rl.outputs["Image"], glare.inputs["Image"])
               nt.links.new(glare.outputs["Image"], comp.inputs["Image"])
               print(">>> GLARE OK")
           except Exception as e:
               print(">>> GLARE SKIP:", e)
 
-          # ── 렌더 설정: 세로 720p, 24fps ──
+          # ── 렌더 설정 ──
           scene.render.engine = 'CYCLES'
           scene.cycles.device = 'CPU'
           scene.cycles.samples = 12
@@ -144,7 +267,6 @@ jobs:
           scene.render.image_settings.file_format = 'PNG'
           scene.render.filepath = os.path.join(frames_dir, "frame_")
           print(">>> RENDER START", scene.frame_start, "-", scene.frame_end)
-
           bpy.ops.render.render(animation=True)
           print(">>> RENDER DONE, frames:", len(os.listdir(frames_dir)))
           EOF
@@ -183,12 +305,12 @@ jobs:
           set -e
           echo "frame count: $(ls frames | wc -l)"
           ffmpeg -y -framerate 24 -i frames/frame_%04d.png \
-            -c:v libx264 -pix_fmt yuv420p -crf 20 goal_survivor_intro.mp4
-          ls -al goal_survivor_intro.mp4
+            -c:v libx264 -pix_fmt yuv420p -crf 20 atlas_robot_showcase.mp4
+          ls -al atlas_robot_showcase.mp4
 
       - name: Upload MP4
         uses: actions/upload-artifact@v4
         with:
-          name: goal-survivor-intro
-          path: goal_survivor_intro.mp4
+          name: atlas-robot-showcase
+          path: atlas_robot_showcase.mp4
           if-no-files-found: error
