@@ -1,4 +1,4 @@
-name: Blender Render MP4 v5
+name: Goal Survivor Intro v6
 
 on:
   workflow_dispatch:
@@ -7,93 +7,188 @@ jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          - { start: 1,   end: 90 }
+          - { start: 91,  end: 180 }
+          - { start: 181, end: 270 }
+          - { start: 271, end: 360 }
     steps:
       - name: Install Blender
         run: |
           sudo snap install blender --classic
           blender --version
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          ffmpeg -version | head -1
 
       - name: Generate scene script
         run: |
           cat > scene.py << 'EOF'
           import bpy, math, os
-          print(">>> SCRIPT START, cwd =", os.getcwd())
+          print(">>> SCRIPT START")
 
           bpy.ops.wm.read_factory_settings(use_empty=True)
           scene = bpy.context.scene
 
-          # 모델링: 토러스
-          bpy.ops.mesh.primitive_torus_add(major_radius=1.2, minor_radius=0.4)
-          obj = bpy.context.object
-          for poly in obj.data.polygons:
-              poly.use_smooth = True
+          # 어두운 월드 배경
+          world = bpy.data.worlds.new("W")
+          world.color = (0.002, 0.002, 0.012)
+          scene.world = world
 
-          # 네온 Emission 머티리얼
-          mat = bpy.data.materials.new("Neon")
-          mat.use_nodes = True
-          nodes = mat.node_tree.nodes
-          nodes.clear()
-          out = nodes.new("ShaderNodeOutputMaterial")
-          emis = nodes.new("ShaderNodeEmission")
-          emis.inputs[0].default_value = (0.0, 1.0, 0.8, 1)
-          emis.inputs[1].default_value = 5.0
-          mat.node_tree.links.new(emis.outputs[0], out.inputs[0])
-          obj.data.materials.append(mat)
+          def neon_mat(name, color, strength):
+              mat = bpy.data.materials.new(name)
+              mat.use_nodes = True
+              nodes = mat.node_tree.nodes
+              nodes.clear()
+              out = nodes.new("ShaderNodeOutputMaterial")
+              emis = nodes.new("ShaderNodeEmission")
+              emis.inputs[0].default_value = (color[0], color[1], color[2], 1)
+              emis.inputs[1].default_value = strength
+              mat.node_tree.links.new(emis.outputs[0], out.inputs[0])
+              return mat, emis.inputs[1]
 
-          # 바닥 / 조명 / 카메라
-          bpy.ops.mesh.primitive_plane_add(size=20, location=(0, 0, -1.5))
-          bpy.ops.object.light_add(type='AREA', location=(3, -3, 4))
-          bpy.context.object.data.energy = 400
-          bpy.ops.object.camera_add(location=(0, -6, 2),
-                                    rotation=(math.radians(75), 0, 0))
-          scene.camera = bpy.context.object
+          def kf(sock, frame, val):
+              sock.default_value = val
+              sock.keyframe_insert("default_value", frame=frame)
 
-          # 애니메이션: 90프레임 = 3초
-          scene.frame_start, scene.frame_end = 1, 90
-          obj.rotation_euler = (0, 0, 0)
-          obj.keyframe_insert("rotation_euler", frame=1)
-          obj.rotation_euler = (math.radians(360), 0, math.radians(360))
-          obj.keyframe_insert("rotation_euler", frame=90)
+          # ── 신스웨이브 그리드 바닥 (마젠타 와이어) ──
+          bpy.ops.mesh.primitive_grid_add(x_subdivisions=40, y_subdivisions=40,
+                                          size=60, location=(0, 10, -1.2))
+          grid = bpy.context.object
+          wire = grid.modifiers.new("Wire", 'WIREFRAME')
+          wire.thickness = 0.06
+          gmat, _ = neon_mat("Grid", (1.0, 0.1, 0.9), 2.0)
+          grid.data.materials.append(gmat)
 
-          # 렌더 설정
+          # ── 타이틀: GOAL / SURVIVOR (시안, 3초에 플리커 점등) ──
+          bpy.ops.object.text_add(location=(0, 2, 0.9))
+          title = bpy.context.object
+          title.data.body = "GOAL\nSURVIVOR"
+          title.data.align_x = 'CENTER'
+          title.data.size = 1.1
+          title.data.extrude = 0.06
+          title.rotation_euler = (math.radians(90), 0, 0)
+          tmat, t_str = neon_mat("Title", (0.0, 1.0, 0.85), 0.0)
+          title.data.materials.append(tmat)
+          for f, v in [(1,0),(70,0),(74,9),(78,1),(82,10),(86,2),(90,8),(96,8)]:
+              kf(t_str, f, v)
+
+          # ── 서브타이틀: NEON LAST STAND (마젠타, 10초 페이드인) ──
+          bpy.ops.object.text_add(location=(0, 2, -0.35))
+          sub = bpy.context.object
+          sub.data.body = "NEON LAST STAND"
+          sub.data.align_x = 'CENTER'
+          sub.data.size = 0.28
+          sub.data.extrude = 0.02
+          sub.rotation_euler = (math.radians(90), 0, 0)
+          smat, s_str = neon_mat("Sub", (1.0, 0.15, 0.9), 0.0)
+          sub.data.materials.append(smat)
+          for f, v in [(1,0),(238,0),(262,6)]:
+              kf(s_str, f, v)
+
+          # ── 빛나는 공 (4.5~10초 굴러 지나감) ──
+          bpy.ops.mesh.primitive_uv_sphere_add(radius=0.55, location=(1.3, 26, -0.65))
+          ball = bpy.context.object
+          for p in ball.data.polygons:
+              p.use_smooth = True
+          bmat, _ = neon_mat("Ball", (1.0, 1.0, 1.0), 1.5)
+          ball.data.materials.append(bmat)
+          ball.keyframe_insert("location", frame=110)
+          ball.location = (1.3, -4.5, -0.65)
+          ball.keyframe_insert("location", frame=250)
+          ball.rotation_euler = (0, 0, 0)
+          ball.keyframe_insert("rotation_euler", frame=110)
+          ball.rotation_euler = (-math.radians(360 * 6), 0, 0)
+          ball.keyframe_insert("rotation_euler", frame=250)
+
+          # ── 카메라 (세로 프레이밍, 천천히 전진) ──
+          bpy.ops.object.camera_add(location=(0, -9.5, 0.6),
+                                    rotation=(math.radians(88), 0, 0))
+          cam = bpy.context.object
+          cam.data.lens = 24
+          scene.camera = cam
+          cam.keyframe_insert("location", frame=1)
+          cam.location = (0, -7.0, 0.6)
+          cam.keyframe_insert("location", frame=360)
+
+          # ── 네온 글로우 (실패해도 렌더는 계속) ──
+          try:
+              scene.use_nodes = True
+              nt = scene.node_tree
+              rl = nt.nodes.get("Render Layers") or nt.nodes.new("CompositorNodeRLayers")
+              comp = nt.nodes.get("Composite") or nt.nodes.new("CompositorNodeComposite")
+              glare = nt.nodes.new("CompositorNodeGlare")
+              glare.glare_type = 'FOG_GLOW'
+              try:
+                  glare.threshold = 1.0
+              except Exception:
+                  pass
+              nt.links.new(rl.outputs["Image"], glare.inputs["Image"])
+              nt.links.new(glare.outputs["Image"], comp.inputs["Image"])
+              print(">>> GLARE OK")
+          except Exception as e:
+              print(">>> GLARE SKIP:", e)
+
+          # ── 렌더 설정: 세로 720p, 24fps ──
           scene.render.engine = 'CYCLES'
           scene.cycles.device = 'CPU'
-          scene.cycles.samples = 16
+          scene.cycles.samples = 12
           scene.cycles.use_denoising = True
-          scene.render.resolution_x = 640
-          scene.render.resolution_y = 360
-          scene.render.fps = 30
+          scene.render.resolution_x = 720
+          scene.render.resolution_y = 1280
+          scene.render.fps = 24
+          scene.frame_start = int(os.environ.get("FRAME_START", "1"))
+          scene.frame_end = int(os.environ.get("FRAME_END", "360"))
 
-          # PNG 프레임 시퀀스로 출력 (Blender 5.x 호환)
           frames_dir = os.path.join(os.environ.get("OUT_DIR", os.getcwd() + "/output"), "frames")
           os.makedirs(frames_dir, exist_ok=True)
           scene.render.image_settings.file_format = 'PNG'
           scene.render.filepath = os.path.join(frames_dir, "frame_")
-          print(">>> RENDER START, frames_dir =", frames_dir)
+          print(">>> RENDER START", scene.frame_start, "-", scene.frame_end)
 
           bpy.ops.render.render(animation=True)
           print(">>> RENDER DONE, frames:", len(os.listdir(frames_dir)))
           EOF
 
-      - name: Render frames
+      - name: Render frames ${{ matrix.start }}-${{ matrix.end }}
         env:
           OUT_DIR: ${{ github.workspace }}/output
+          FRAME_START: ${{ matrix.start }}
+          FRAME_END: ${{ matrix.end }}
         run: blender -b --python-exit-code 1 -P scene.py
 
-      - name: Encode MP4 with ffmpeg
+      - name: Upload frames
+        uses: actions/upload-artifact@v4
+        with:
+          name: frames-${{ matrix.start }}
+          path: output/frames/*.png
+          if-no-files-found: error
+
+  encode:
+    needs: render
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Download all frames
+        uses: actions/download-artifact@v4
+        with:
+          pattern: frames-*
+          merge-multiple: true
+          path: frames
+
+      - name: Encode MP4
         run: |
           set -e
-          cd output
-          ls frames | head -3
-          ffmpeg -y -framerate 30 -i frames/frame_%04d.png \
-            -c:v libx264 -pix_fmt yuv420p -crf 20 anim.mp4
-          ls -al anim.mp4
+          echo "frame count: $(ls frames | wc -l)"
+          ffmpeg -y -framerate 24 -i frames/frame_%04d.png \
+            -c:v libx264 -pix_fmt yuv420p -crf 20 goal_survivor_intro.mp4
+          ls -al goal_survivor_intro.mp4
 
       - name: Upload MP4
         uses: actions/upload-artifact@v4
         with:
-          name: blender-mp4
-          path: output/anim.mp4
+          name: goal-survivor-intro
+          path: goal_survivor_intro.mp4
           if-no-files-found: error
