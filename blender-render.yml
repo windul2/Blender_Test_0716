@@ -1,4 +1,4 @@
-name: Blender Render MP4
+name: Blender Render MP4 v3
 
 on:
   workflow_dispatch:
