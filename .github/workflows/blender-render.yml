@@ -1,4 +1,4 @@
-name: Blender Render MP4
+name: Blender Render MP4 v3
 
 on:
   workflow_dispatch:
@@ -9,54 +9,54 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Install Blender
-        run: sudo snap install blender --classic
+        run: |
+          sudo snap install blender --classic
+          which blender
+          blender --version
 
       - name: Generate scene script
         run: |
           cat > scene.py << 'EOF'
           import bpy, math, os
+          print(">>> SCRIPT START, cwd =", os.getcwd())
 
-          # ── 빈 씬으로 시작 ──
           bpy.ops.wm.read_factory_settings(use_empty=True)
           scene = bpy.context.scene
 
-          # ── 모델링: 토러스 ──
+          # 모델링: 토러스
           bpy.ops.mesh.primitive_torus_add(major_radius=1.2, minor_radius=0.4)
           obj = bpy.context.object
-          bpy.ops.object.shade_smooth()
+          for poly in obj.data.polygons:
+              poly.use_smooth = True
 
-          # ── 네온 Emission 머티리얼 ──
+          # 네온 Emission 머티리얼
           mat = bpy.data.materials.new("Neon")
           mat.use_nodes = True
           nodes = mat.node_tree.nodes
           nodes.clear()
           out = nodes.new("ShaderNodeOutputMaterial")
           emis = nodes.new("ShaderNodeEmission")
-          emis.inputs[0].default_value = (0.0, 1.0, 0.8, 1)  # 시안 네온
-          emis.inputs[1].default_value = 5.0                  # 밝기
+          emis.inputs[0].default_value = (0.0, 1.0, 0.8, 1)
+          emis.inputs[1].default_value = 5.0
           mat.node_tree.links.new(emis.outputs[0], out.inputs[0])
           obj.data.materials.append(mat)
 
-          # ── 바닥 ──
+          # 바닥 / 조명 / 카메라
           bpy.ops.mesh.primitive_plane_add(size=20, location=(0, 0, -1.5))
-
-          # ── 조명 ──
           bpy.ops.object.light_add(type='AREA', location=(3, -3, 4))
           bpy.context.object.data.energy = 400
-
-          # ── 카메라 ──
           bpy.ops.object.camera_add(location=(0, -6, 2),
                                     rotation=(math.radians(75), 0, 0))
           scene.camera = bpy.context.object
 
-          # ── 회전 애니메이션 (90프레임 = 30fps 3초) ──
+          # 애니메이션: 90프레임 = 3초
           scene.frame_start, scene.frame_end = 1, 90
           obj.rotation_euler = (0, 0, 0)
           obj.keyframe_insert("rotation_euler", frame=1)
           obj.rotation_euler = (math.radians(360), 0, math.radians(360))
           obj.keyframe_insert("rotation_euler", frame=90)
 
-          # ── 렌더 설정: Cycles CPU 저샘플 + 디노이즈 ──
+          # 렌더 설정
           scene.render.engine = 'CYCLES'
           scene.cycles.device = 'CPU'
           scene.cycles.samples = 16
@@ -65,21 +65,43 @@ jobs:
           scene.render.resolution_y = 360
           scene.render.fps = 30
 
-          # ── MP4(H.264) 직접 출력 ──
+          # MP4 출력 (환경변수로 받은 절대경로 사용)
+          out_dir = os.environ.get("OUT_DIR", os.path.join(os.getcwd(), "output"))
+          os.makedirs(out_dir, exist_ok=True)
           scene.render.image_settings.file_format = 'FFMPEG'
           scene.render.ffmpeg.format = 'MPEG4'
           scene.render.ffmpeg.codec = 'H264'
           scene.render.ffmpeg.constant_rate_factor = 'MEDIUM'
-          scene.render.filepath = os.path.join(os.getcwd(), "output", "anim")
+          scene.render.filepath = os.path.join(out_dir, "anim")
+          print(">>> RENDER START, out_dir =", out_dir)
 
           bpy.ops.render.render(animation=True)
+          print(">>> RENDER DONE:", os.listdir(out_dir))
           EOF
+          ls -al scene.py
 
       - name: Render animation
-        run: blender -b -P scene.py
+        env:
+          OUT_DIR: ${{ github.workspace }}/output
+        run: |
+          set -e
+          echo "workspace = $GITHUB_WORKSPACE"
+          blender -b --python-exit-code 1 -P scene.py
+
+      - name: Diagnose
+        if: always()
+        run: |
+          echo "── output 폴더 내용 ──"
+          ls -alR "$GITHUB_WORKSPACE/output" 2>/dev/null || echo "output 폴더 없음"
+          echo "── 디스크 전체에서 mp4 검색 ──"
+          find / -name "*.mp4" -not -path "/snap/*" -not -path "/proc/*" 2>/dev/null || true
+          # MP4 없으면 여기서 확실하게 실패시킴
+          test -n "$(ls "$GITHUB_WORKSPACE"/output/*.mp4 2>/dev/null)" \
+            || { echo "::error::MP4 파일이 생성되지 않았습니다. 위 로그 확인"; exit 1; }
 
       - name: Upload MP4
         uses: actions/upload-artifact@v4
         with:
           name: blender-mp4
           path: output/*.mp4
+          if-no-files-found: error
